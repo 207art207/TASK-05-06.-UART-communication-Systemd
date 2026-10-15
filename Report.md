@@ -1,5 +1,15 @@
 # Report: UART ECHO Application
 
+## Contents
+
+- [1. Host and Target Preparation for UART Communication](#1-host-and-target-preparation-for-uart-communication)
+- [2. UART Loopback Test](#2-uart-loopback-test)
+- [3. Implemented Application Functionality](#3-implemented-application-functionality-commit-task-05-add-uart-echo-application-with-logging-and-signal-handling-and-add-reportmd)
+- [4. Makefile Development and Verification](#4-makefile-development-and-verification)
+- [5. Deployment and UART ECHO Verification on the TARGET](#5-deployment-and-uart-echo-verification-on-the-target)
+- [6. Automatic Startup Using systemd](#6-automatic-startup-using-systemd)
+- [7. Overall Conclusion](#7-overall-conclusion)
+
 ## 1. Host and Target Preparation for UART Communication
 
 ### 1.1. Host Development Tools
@@ -990,3 +1000,51 @@ The recorded results confirm:
 - UART message exchange and case conversion after reboot;
 - timestamped logging of the original received message;
 - handling of SIGTERM during service shutdown.
+
+## 7. Overall Conclusion
+
+The task resulted in UART ECHO application deployed on Raspberry Pi 5
+running Raspberry Pi OS Lite.
+
+UART0 was enabled on GPIO14 and GPIO15 and made accessible to the regular
+user through the `dialout` group. A physical TX–RX loopback test confirmed
+transmission and reception at 115200 8N1 with local echo disabled.
+
+The C application uses `termios` to configure the serial interface supplied
+as a command-line argument. It collects incoming bytes until a CRLF
+terminator is received, logs the original message with a timestamp,
+and returns the message with the case of ASCII letters inverted.
+Each execution creates a separate log file named using its startup
+timestamp and process identifier.
+
+The Makefile provides `all`, `clean`, and `deploy` targets and supports
+compiler selection through `CROSS_COMPILE`. Native and static ARM64 builds
+completed without compiler diagnostics. The ARM64 executable was copied
+to the TARGET and successfully executed using `/dev/ttyAMA0`.
+
+Hardware testing confirmed the following exchanges:
+
+| Execution mode | Received by TARGET | Returned to HOST |
+| --- | --- | --- |
+| Manual startup | `Hello uart test` | `hELLO UART TEST` |
+| systemd startup after reboot | `hELLO AFTER REBOOT` | `Hello after reboot` |
+
+In both cases, the application log preserved the original received
+message and its timestamp. Manual termination through Ctrl+C produced
+a `STOP SIGINT` entry and exit status `0`. Stopping the systemd service
+produced a `STOP SIGTERM` entry, confirming that the application handled
+the service termination signal.
+
+The additional automatic-startup requirement was also completed.
+The service was installed, enabled, and confirmed active after TARGET
+reboot. A subsequent UART exchange demonstrated that the automatically
+started application remained functional.
+
+The implementation includes error reporting and resource cleanup. The recorded
+results therefore establish successful operation for the demonstrated scenarios,
+without claiming exhaustive validation of all error paths.
+
+The main assignment functionality and the optional systemd startup
+feature were implemented. The work covered the complete workflow from
+UART configuration and hardware checks to C development, cross-compilation,
+deployment, logging, signal handling and service integration.
