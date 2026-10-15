@@ -202,7 +202,7 @@ hangup is      : no
 nolock is      : no
 send_cmd is    : sz -vv
 receive_cmd is : rz -vv -E
-imap is        : 
+imap is        :
 omap is        : crcrlf,
 emap is        : crcrlf,delbs,
 logfile is     : none
@@ -259,8 +259,8 @@ The recorded checks confirm:
 - inactive serial login service on UART0;
 - successful transmission and reception through the loopback connection.
 
-A control test with the jumper removed with local echo disabled and no 
-external device returning data, the expected result is that typed 
+A control test with the jumper removed with local echo disabled and no
+external device returning data, the expected result is that typed
 characters aren't displayed.
 
 ## 3. Implemented Application Functionality (Commit: Task-05: add UART echo application with logging and signal handling; and add Report.md)
