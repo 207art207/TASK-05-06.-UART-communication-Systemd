@@ -56,8 +56,8 @@ The UART connections on the 40-pin header are:
 
 | Signal | GPIO | Physical header pin |
 |---|---|---|
-| TXD0 — transmit | GPIO14 | 8 |
-| RXD0 — receive | GPIO15 | 10 |
+| TXD0 - transmit | GPIO14 | 8 |
+| RXD0 - receive | GPIO15 | 10 |
 
 ![Raspberry Pi 5 UART0 TX-RX loopback connection](images/uart-loopback.jpg)
 
@@ -277,9 +277,9 @@ If the number of arguments is incorrect, the application displays a usage messag
 
 The port is opened for reading and writing using the following flags:
 
-- `O_RDWR` — enables bidirectional communication;
-- `O_NOCTTY` — prevents the port from becoming the controlling terminal of the process;
-- `O_NONBLOCK` — enables non-blocking operations on the device.
+- `O_RDWR` - enables bidirectional communication;
+- `O_NOCTTY` - prevents the port from becoming the controlling terminal of the process;
+- `O_NONBLOCK` - enables non-blocking operations on the device.
 
 The original port settings are saved using `tcgetattr()`.
 
@@ -303,8 +303,8 @@ The application uses `poll()` to check whether the port is ready for reading. Re
 
 A message is considered complete only after receiving the following two bytes:
 
-- `\r` — CR, Carriage Return;
-- `\n` — LF, Line Feed.
+- `\r` - CR, Carriage Return;
+- `\n` - LF, Line Feed.
 
 An individual CR or LF does not terminate a message.
 
@@ -412,7 +412,7 @@ of the UART ECHO application.
 
 The application is built directly from `src/mycom.c` into the
 `mycom` executable. Since the project currently contains one C source
-file, separate object-file rules arent required.
+file, separate object-file rules aren't required.
 
 The Makefile provides the following targets:
 
@@ -522,12 +522,12 @@ make -n deploy CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
 The dry run completed successfully. It verified command generation
 without opening an SSH connection or transferring files.
 
-The `deploy` target copies the executable but doesnt start the
+The `deploy` target copies the executable but doesn't start the
 application.
 
 ### 4.5. Rebuilding When Build Options Change
 
-The Makefile tracks file timestamps, but it doesnt automatically
+The Makefile tracks file timestamps, but it doesn't automatically
 detect changes to command-line variable values such as `CROSS_COMPILE`
 or `LDFLAGS`.
 
@@ -541,3 +541,234 @@ make all CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
 
 This prevents a native executable from being reused accidentally
 when preparing an ARM64 deployment.
+
+## 5. Deployment and UART ECHO Verification on the TARGET
+
+### 5.1. Hardware Connection
+
+The HOST communicates with the Raspberry Pi through a USB–UART adapter.
+
+The serial interfaces used during the test were:
+
+| Device | Serial interface |
+|---|---|
+| HOST: USB–UART adapter | `/dev/ttyUSB0` |
+| TARGET: Raspberry Pi 5 UART0 | `/dev/ttyAMA0` |
+
+The communication connection uses crossed transmit and receive signals
+and a common ground:
+
+| USB–UART adapter | Raspberry Pi 5 |
+|---|---|
+| TX | GPIO15 / RXD0, physical pin 10 |
+| RX | GPIO14 / TXD0, physical pin 8 |
+| GND | GND |
+
+The Raspberry Pi UART requires 3.3 V logic levels.
+
+> **Photo 1 - USB–UART adapter pinout:**
+
+![USB–UART adapter pinout](images/uart-adapter-pinout.jpg)
+
+> **Photo 2 - USB–UART adapter connected to Raspberry Pi 5:**
+
+![USB–UART adapter connected to Raspberry Pi 5](images/uart-adapter-connection.jpg)
+
+### 5.2. Deployed Executable Verification
+
+The application was deployed to the following directory on the TARGET:
+
+```text
+/home/art207-rpi5/Projects/TASK-05_UART_communication
+```
+
+The following command was executed on the HOST:
+```text
+make deploy CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
+```
+
+Output:
+```text
+aarch64-linux-gnu-gcc  -std=c11 -O2 -Wall -Wextra -Wpedantic src/mycom.c -o mycom -static
+ssh art207-rpi5@ajax-rpi5 'mkdir -p "/home/art207-rpi5/Projects/TASK-05_UART_communication/logs"'
+Enter passphrase for key '/home/art207/.ssh/id_ed25519_rpi':
+scp mycom art207-rpi5@ajax-rpi5:/home/art207-rpi5/Projects/TASK-05_UART_communication/mycom
+Enter passphrase for key '/home/art207/.ssh/id_ed25519_rpi':
+mycom
+```
+
+The deployed files were inspected using:
+
+```bash
+cd Projects/TASK-05_UART_communication/
+ls -a
+```
+
+Recorded output:
+
+```text
+.  ..  cmdline.txt.before-uart  config.txt.before-uart  logs  mycom
+```
+
+Execution permission was set, and the executable format was checked:
+
+```bash
+chmod +x mycom
+file mycom
+```
+
+Recorded output:
+
+```text
+mycom: ELF 64-bit LSB executable, ARM aarch64, version 1 (GNU/Linux), statically linked, BuildID[sha1]=ee6b6dc5cccf9d54cde4615fc8434c7f5416e185, for GNU/Linux 3.7.0, with debug_info, not stripped
+```
+
+The result identifies the deployed file as a statically linked,
+64-bit ARM AArch64 executable.
+
+### 5.3. Application Startup on the TARGET
+
+The application was started from its deployment directory:
+
+```bash
+./mycom /dev/ttyAMA0
+```
+
+Recorded output:
+
+```text
+Ready: /dev/ttyAMA0, 115200 8N1; log: logs/20261016-000646-1235.log
+```
+
+The application successfully opened and configured `/dev/ttyAMA0`
+and created a log file for this execution.
+
+The filename contains the startup timestamp and process identifier:
+
+- startup timestamp: `20261016-000646`;
+- PID: `1235`.
+
+### 5.4. HOST Terminal Configuration
+
+The USB–UART adapter was opened on the HOST using:
+
+```bash
+picocom --baud 115200 --databits 8 --parity n \
+    --stopbits 1 --flow n --omap crcrlf /dev/ttyUSB0
+```
+
+Relevant startup output:
+
+```text
+picocom v3.1
+
+port is        : /dev/ttyUSB0
+flowcontrol    : none
+baudrate is    : 115200
+parity is      : none
+databits are   : 8
+stopbits are   : 1
+local echo is  : no
+omap is        : crcrlf,
+```
+
+Both ends of the connection were configured for 115200 8N1,
+with flow control disabled.
+
+Local echo was disabled on the HOST. Therefore, the displayed response
+was received through the serial port rather than generated by local
+keyboard echo.
+
+The `--omap crcrlf` option converts an outgoing carriage return
+into CRLF, providing the message terminator expected by `mycom`.
+
+### 5.5. Message Exchange Result
+
+The following message was entered on the HOST and submitted with Enter:
+
+```text
+Hello uart test
+```
+
+The response displayed by `picocom` was:
+
+```text
+Type [C-a] [C-h] to see available commands
+Terminal ready
+hELLO UART TEST
+```
+
+Comparison:
+
+| Direction | Message content |
+|---|---|
+| HOST → TARGET | `Hello uart test` |
+| TARGET → HOST | `hELLO UART TEST` |
+
+The uppercase `H` was converted to lowercase, and the lowercase
+letters were converted to uppercase. Spaces were preserved.
+
+The displayed response matches the expected case-inversion behavior
+for the transmitted message.
+
+### 5.6. Termination Using Ctrl+C
+
+The application was stopped by pressing `Ctrl+C` in the TARGET
+terminal where `mycom` was running in the foreground.
+
+This delivered `SIGINT` to the application.
+
+After the process terminated, its exit status was checked:
+
+```bash
+echo $?
+```
+
+Recorded output:
+
+```text
+0
+```
+
+The application returned a successful exit status. Its log also
+recorded `STOP SIGINT`, confirming that the termination signal
+was handled by the application.
+
+### 5.7. Log File Verification
+
+After termination, the log directory was inspected on the TARGET:
+
+```bash
+cd logs/
+ls -a
+```
+
+Recorded output:
+
+```text
+.  ..  20261015-235003-1230.log  20261016-000646-1235.log
+```
+
+The log corresponding to the tested execution was opened using:
+
+```bash
+cat 20261016-000646-1235.log
+```
+
+Recorded contents:
+
+```text
+2026-10-16 00:06:46+0300 START /dev/ttyAMA0
+2026-10-16 00:07:13+0300 RX Hello uart test
+2026-10-16 00:10:03+0300 STOP SIGINT
+```
+
+The log confirms:
+
+- successful startup using `/dev/ttyAMA0`;
+- reception of the original message `Hello uart test`;
+- a timestamp at the beginning of each entry;
+- termination through `SIGINT`.
+
+The `RX` record preserves the received message before case conversion.
+The HOST received the converted response `hELLO UART TEST`.
