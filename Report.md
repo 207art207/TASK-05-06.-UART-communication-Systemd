@@ -1,8 +1,271 @@
 # Report: UART ECHO Application
 
-## 1. Implemented Application Functionality (Commit: Task-05: add UART echo application with logging and signal handling; and add Report.md)
+## 1. Host and Target Preparation for UART Communication
 
-### 1.1. Port Selection and Configuration
+### 1.1. Host Development Tools
+
+| Tool | Version |
+|---|---|
+| Native GCC | 16.2.1 |
+| GNU Make | 4.4.1 |
+| AArch64 cross-compiler | GCC 16.1.0 |
+| clang-format | 23.1.1 |
+
+### 1.2. Target Platform Identification
+
+The TARGET is a Raspberry Pi 5 with 1 GB of RAM running
+Raspberry Pi OS Lite.
+
+The operating system and architecture specs of Target environment:
+
+| Parameter | Value |
+|---|---|
+| Hostname | `ajax-rpi5` |
+| User | `art207-rpi5` |
+| Kernel release | `6.18.50+rpt-rpi-2712` |
+| Machine architecture | `aarch64` |
+| Userspace word size | 64 bits |
+| Debian package architecture | `arm64` |
+| Operating system base | Debian GNU/Linux 13, Trixie |
+| Reported Debian full version | 13.7 |
+
+The TARGET therefore uses a 64-bit ARM Linux environment.
+
+### 1.3. UART Configuration
+
+The boot configuration was opened on the TARGET using:
+
+```bash
+sudo nano /boot/firmware/config.txt
+```
+
+The Raspberry Pi 5 configuration section contains:
+
+```ini
+[pi5]
+dtoverlay=nospi10
+dtoverlay=uart0-pi5
+
+[all]
+```
+
+The `uart0-pi5` overlay enables UART0 on GPIO14 and GPIO15.
+The existing `nospi10` setting was retained.
+
+The UART connections on the 40-pin header are:
+
+| Signal | GPIO | Physical header pin |
+|---|---|---|
+| TXD0 — transmit | GPIO14 | 8 |
+| RXD0 — receive | GPIO15 | 10 |
+
+![Raspberry Pi 5 UART0 TX-RX loopback connection](images/uart-loopback.jpg)
+
+### 1.4. Kernel Console Inspection
+
+The active kernel command line was inspected using:
+
+```bash
+cat /proc/cmdline
+```
+
+The relevant console parameters were:
+
+```text
+console=ttyAMA10,115200 console=tty1
+```
+
+The serial kernel console is assigned to `/dev/ttyAMA10`, the Raspberry
+Pi 5 debug UART.
+
+The application uses `/dev/ttyAMA0` on GPIO14 and GPIO15. Therefore,
+the observed `console=ttyAMA10,115200` parameter doesn't assign the
+application's UART0 port to the kernel console, and removing this
+parameter wasn't required.
+
+### 1.5. Device, Pin Function, and Permission Checks
+
+The UART device, GPIO functions, and user groups were checked using:
+
+```bash
+ls -l /dev/ttyAMA0
+pinctrl get 14
+pinctrl get 15
+id
+```
+
+Device information:
+
+```text
+crw-rw---- 1 root dialout 204, 64 Oct 15 22:07 /dev/ttyAMA0
+```
+
+This confirms that `/dev/ttyAMA0` exists as a character device.
+Its owner is `root`, and its group is `dialout`.
+Both the owner and group have read and write permissions.
+
+GPIO configuration:
+
+```text
+14: a4    pn | hi // GPIO14 = TXD0
+15: a4    pu | hi // GPIO15 = RXD0
+```
+
+The output confirms that GPIO14 is assigned to UART0 transmission
+and GPIO15 is assigned to UART0 reception.
+
+The `id` output confirmed that user `art207-rpi5`, UID 1000,
+belongs to the `dialout` group.
+
+Effective read and write access was checked explicitly:
+
+```bash
+test -r /dev/ttyAMA0 && test -w /dev/ttyAMA0 && echo "UART access: OK"
+```
+
+Result:
+
+```text
+UART access: OK
+```
+
+The user can therefore access the UART device without running the
+communication application as root.
+
+### 1.6. Port Availability Check
+
+The serial login service and processes using the UART device were
+checked using:
+
+```bash
+systemctl is-active serial-getty@ttyAMA0.service
+sudo fuser -v /dev/ttyAMA0
+```
+
+The service state was:
+
+```text
+inactive
+```
+
+The `fuser` command produced no process listing.
+
+At the time of inspection, the serial login service was inactive
+and no process holding `/dev/ttyAMA0` open was reported.
+
+## 2. UART Loopback Test
+
+### 2.1. Test Arrangement
+
+UART0 was tested by connecting its transmit and receive pins directly:
+
+```text
+Raspberry Pi 5, 40-pin header
+
+Physical pin 8                         Physical pin 10
+GPIO14 / TXD0 ─────── jumper ────────── GPIO15 / RXD0
+```
+
+![Raspberry Pi 5 UART0 TX-RX loopback connection](images/uart-loopback.jpg)
+
+The transmitted bytes return to the receiver of the same UART.
+
+The terminal program runs on the TARGET and opens `/dev/ttyAMA0`.
+
+### 2.2. Terminal Configuration
+
+The following command was executed on the TARGET:
+
+```bash
+picocom --baud 115200 --databits 8 --parity n \
+    --stopbits 1 --flow n --omap crcrlf /dev/ttyAMA0
+```
+
+Relevant startup output:
+
+```text
+art207-rpi5@ajax-rpi5:~ $ picocom --baud 115200 --databits 8 --parity n \
+    --stopbits 1 --flow n --omap crcrlf /dev/ttyAMA0
+picocom v3.1
+
+port is        : /dev/ttyAMA0
+flowcontrol    : none
+baudrate is    : 115200
+parity is      : none
+databits are   : 8
+stopbits are   : 1
+escape is      : C-a
+local echo is  : no
+noinit is      : no
+noreset is     : no
+hangup is      : no
+nolock is      : no
+send_cmd is    : sz -vv
+receive_cmd is : rz -vv -E
+imap is        : 
+omap is        : crcrlf,
+emap is        : crcrlf,delbs,
+logfile is     : none
+initstring     : none
+exit_after is  : not set
+exit is        : no
+
+Type [C-a] [C-h] to see available commands
+Terminal ready
+Loopback123
+```
+
+Disabling local echo is essential for this test. It prevents
+`picocom` from displaying keyboard input directly, allowing the
+displayed text to demonstrate that bytes were received back
+through the serial port.
+
+### 2.3. Observed Result
+
+The following test string was entered:
+
+```text
+Loopback123
+```
+
+The recorded terminal output was:
+
+```text
+Type [C-a] [C-h] to see available commands
+Terminal ready
+Loopback123
+```
+
+The transmitted string was displayed with local echo disabled,
+which is consistent with the bytes returning through the TX–RX
+jumper.
+
+The data path was:
+
+```text
+Keyboard → picocom → UART TX → jumper → UART RX → picocom → terminal
+```
+
+### 2.4. Test Outcome and Scope
+
+The loopback test passed for the transmitted string `Loopback123`
+with the UART configured for 115200 8N1.
+
+The recorded checks confirm:
+
+- availability of `/dev/ttyAMA0`;
+- UART0 pin assignment on GPIO14 and GPIO15;
+- read and write access for the regular user;
+- inactive serial login service on UART0;
+- successful transmission and reception through the loopback connection.
+
+A control test with the jumper removed with local echo disabled and no 
+external device returning data, the expected result is that typed 
+characters aren't displayed.
+
+## 3. Implemented Application Functionality (Commit: Task-05: add UART echo application with logging and signal handling; and add Report.md)
+
+### 3.1. Port Selection and Configuration
 
 The device path is passed as a command-line argument:
 
@@ -34,7 +297,7 @@ The following parameters are configured using `termios`:
 
 Raw mode disables terminal echo and automatic character processing. This allows the application to determine message boundaries independently.
 
-### 1.2. Message Reception and Response Generation
+### 3.2. Message Reception and Response Generation
 
 The application uses `poll()` to check whether the port is ready for reading. Received bytes are accumulated sequentially in a buffer.
 
@@ -61,7 +324,7 @@ Sent:     hELLO uart 123!\r\n
 
 The `write_all()` function is used for transmission. It handles partial writes, since a single `write()` call may write only part of the data.
 
-### 1.3. Logging
+### 3.3. Logging
 
 The log file is opened before the UART device. This makes it possible to record an error if the device does not exist or the user lacks the required access permissions.
 
@@ -94,7 +357,7 @@ After each log entry, `fflush()` is called.
 
 If the log file cannot be created or written to, the corresponding error message is printed to the standard error stream (`stderr`).
 
-### 1.4. Error and Signal Handling
+### 3.4. Error and Signal Handling
 
 The application checks the results of device opening, `termios` configuration, event polling, reading, writing, and logging operations.
 
@@ -110,7 +373,7 @@ The main application logic detects the termination request, records the reason f
 
 When the application terminates successfully in response to a signal, it returns exit code `0`.
 
-### 1.5. Limitations of the Current Implementation
+### 3.5. Limitations of the Current Implementation
 
 - The maximum message content length is 1024 bytes, excluding CRLF.
 - The buffer size is 1026 bytes, including the terminating sequence.
@@ -121,7 +384,7 @@ When the application terminates successfully in response to a signal, it returns
 - The reception timestamp is recorded when the application recognizes a complete message, rather than at the hardware level when the first bit arrives.
 - Disconnecting the TX/RX wires does not necessarily cause a device error; no separate communication link monitoring protocol is implemented.
 
-### 1.6. Compilation Verification
+### 3.6. Compilation Verification
 
 Syntax checking and compiler diagnostics were performed using the following command:
 
