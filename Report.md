@@ -402,3 +402,142 @@ A complete native build was also performed in a temporary directory using the fo
 ```
 
 Compilation and linking completed successfully without warnings.
+
+## 4. Makefile Development and Verification
+
+### 4.1. Build Automation
+
+A Makefile was added to automate compilation, cleanup, and deployment
+of the UART ECHO application.
+
+The application is built directly from `src/mycom.c` into the
+`mycom` executable. Since the project currently contains one C source
+file, separate object-file rules arent required.
+
+The Makefile provides the following targets:
+
+| Target | Purpose |
+|---|---|
+| `all` | Build the `mycom` executable |
+| `clean` | Remove the generated executable |
+| `deploy` | Build the executable if necessary and copy it to the TARGET |
+
+The `all` target is the default target, so running `make` builds
+the application.
+
+The `all`, `clean`, and `deploy` targets are declared as `.PHONY`.
+Recipe commands use Tab indentation.
+
+### 4.2. Compiler Configuration and Cross-Compilation
+
+The compiler is selected using:
+
+```makefile
+CROSS_COMPILE ?=
+CC = $(CROSS_COMPILE)gcc
+```
+
+With an empty `CROSS_COMPILE` value, the Makefile invokes the native
+`gcc` compiler.
+
+For the ARM64 TARGET, the prefix is supplied as a command-line argument:
+
+```bash
+make all CROSS_COMPILE=aarch64-linux-gnu-
+```
+
+This selects `aarch64-linux-gnu-gcc`.
+
+The default compiler flags are:
+
+```text
+-std=c11 -O2 -Wall -Wextra -Wpedantic
+```
+
+These select the C11 language standard, enable optimization,
+and enable compiler diagnostics.
+
+The Makefile also accepts `CPPFLAGS`, `CFLAGS`, `LDFLAGS`, and `LDLIBS`,
+allowing build options to be supplied without editing the file.
+
+For the verified static ARM64 build, the following command was used:
+
+```bash
+make all CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
+```
+
+The `-static` linker option produces a statically linked executable.
+
+### 4.3. Native and ARM64 Build Verification
+
+Build checks were performed on the HOST using copies of the current
+Makefile and source file in a temporary directory outside the repository.
+
+The following sequence was executed:
+
+```bash
+make all
+file mycom
+make clean
+
+make all CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
+file mycom
+make clean
+```
+
+Results:
+
+| Check | Result |
+|---|---|
+| Native build | Exit code `0`, no compiler diagnostics |
+| Native executable inspection | ELF 64-bit, x86-64, dynamically linked |
+| Cleanup after native build | Exit code `0` |
+| Static ARM64 build | Exit code `0`, no compiler diagnostics |
+| ARM64 executable inspection | ELF 64-bit, ARM aarch64, statically linked |
+| Cleanup after ARM64 build | Exit code `0`; executable no longer present |
+
+These checks confirm successful compilation and linking for both
+architectures.
+
+### 4.4. Deployment Target
+
+The deployment destination is configured through:
+
+```makefile
+REMOTE ?= art207-rpi5@ajax-rpi5
+REMOTE_DIR ?= /home/art207-rpi5/Projects/TASK-05_UART_communication
+```
+
+The `deploy` target depends on the executable and performs two operations:
+
+1. Creates the destination directory and its `logs` subdirectory using SSH.
+2. Copies `mycom` to the TARGET using SCP.
+
+The generated commands were inspected using a dry run:
+
+```bash
+make -n deploy CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
+```
+
+The dry run completed successfully. It verified command generation
+without opening an SSH connection or transferring files.
+
+The `deploy` target copies the executable but doesnt start the
+application.
+
+### 4.5. Rebuilding When Build Options Change
+
+The Makefile tracks file timestamps, but it doesnt automatically
+detect changes to command-line variable values such as `CROSS_COMPILE`
+or `LDFLAGS`.
+
+Therefore, a previously built executable must be removed before
+switching between native and cross-compilation or changing linker options:
+
+```bash
+make clean
+make all CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
+```
+
+This prevents a native executable from being reused accidentally
+when preparing an ARM64 deployment.
