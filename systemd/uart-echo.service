@@ -1,0 +1,15 @@
+[Unit]
+Description=UART Echo application on GPIO14/15
+
+[Service]
+Type=simple
+User=art207-rpi5
+SupplementaryGroups=dialout
+WorkingDirectory=/home/art207-rpi5/Projects/TASK-05_UART_communication
+ExecStart=/home/art207-rpi5/Projects/TASK-05_UART_communication/mycom /dev/ttyAMA0
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

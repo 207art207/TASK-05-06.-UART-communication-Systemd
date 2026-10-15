@@ -772,3 +772,221 @@ The log confirms:
 
 The `RX` record preserves the received message before case conversion.
 The HOST received the converted response `hELLO UART TEST`.
+
+## 6. Automatic Startup Using systemd
+
+### 6.1. Service Configuration
+
+The `systemd/uart-echo.service` file was added to run the UART ECHO
+application automatically when the TARGET boots:
+
+```ini
+[Unit]
+Description=UART Echo application on GPIO14/15
+
+[Service]
+Type=simple
+User=art207-rpi5
+SupplementaryGroups=dialout
+WorkingDirectory=/home/art207-rpi5/Projects/TASK-05_UART_communication
+ExecStart=/home/art207-rpi5/Projects/TASK-05_UART_communication/mycom /dev/ttyAMA0
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The application runs as `art207-rpi5`, with membership in the `dialout`
+group providing access to the UART device. The working directory matches
+the deployment directory, so application logs are stored in its `logs/`
+subdirectory.
+
+The service is configured to restart after a failure, with a three-second
+delay between attempts. Automatic recovery after a failure wasn't tested
+during this stage.
+
+### 6.2. Service Deployment and Installation
+
+The service file was copied from the HOST to the TARGET:
+
+```bash
+scp ~/Projects/TASK-05.-UART-communication/systemd/uart-echo.service \
+    art207-rpi5@ajax-rpi5:~/Projects/TASK-05_UART_communication
+```
+
+SCP reported a completed transfer (`100%`).
+
+On the TARGET, the file was installed into the system service directory:
+
+```bash
+sudo install -m 644 \
+    ~/Projects/TASK-05_UART_communication/uart-echo.service \
+    /etc/systemd/system/uart-echo.service
+```
+
+The installed unit was checked using:
+
+```bash
+sudo systemd-analyze verify /etc/systemd/system/uart-echo.service
+```
+
+The command produced no diagnostic messages.
+
+The systemd configuration was then reloaded, and the service was enabled
+for automatic startup and started immediately:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now uart-echo.service
+```
+
+Recorded output:
+
+```text
+Created symlink '/etc/systemd/system/multi-user.target.wants/uart-echo.service' → '/etc/systemd/system/uart-echo.service'.
+```
+
+### 6.3. Initial Service Startup
+
+The service state was inspected using:
+
+```bash
+systemctl is-enabled uart-echo.service
+systemctl is-active uart-echo.service
+systemctl status uart-echo.service --no-pager
+```
+
+The first two commands returned:
+
+```text
+enabled
+active
+```
+
+The status output identified the running process as PID `1419`:
+
+```text
+/home/art207-rpi5/Projects/TASK-05_UART_communication/mycom /dev/ttyAMA0
+```
+
+The journal contained the following startup messages:
+
+```text
+Oct 16 01:09:21 ajax-rpi5 systemd[1]: Started uart-echo.service - UART Echo application on GPIO14/15.
+Oct 16 01:09:21 ajax-rpi5 mycom[1419]: Ready: /dev/ttyAMA0, 115200 8N1; log: logs/20261016-010921-1419.log
+```
+
+This confirmed that systemd started the application using the intended
+UART device and working directory.
+
+### 6.4. Automatic Startup After Reboot
+
+The TARGET was rebooted:
+
+```bash
+sudo reboot
+```
+
+After reconnecting through SSH, the service state and the journal from
+the current boot were inspected:
+
+```bash
+systemctl is-active uart-echo.service
+journalctl -u uart-echo.service -b --no-pager
+```
+
+Recorded output:
+
+```text
+active
+Oct 16 01:12:30 ajax-rpi5 systemd[1]: Started uart-echo.service - UART Echo application on GPIO14/15.
+Oct 16 01:12:30 ajax-rpi5 mycom[611]: Ready: /dev/ttyAMA0, 115200 8N1; log: logs/20261016-011230-611.log
+```
+
+The application started automatically after reboot, without a manual
+`./mycom` invocation. The new process had PID `611` and created a separate
+log file for this execution.
+
+### 6.5. UART ECHO Verification After Reboot
+
+On the HOST, the USB-to-UART adapter was opened using:
+
+```bash
+picocom --baud 115200 --databits 8 --parity n \
+    --stopbits 1 --flow n --omap crcrlf /dev/ttyUSB0
+```
+
+Local echo was disabled. The outgoing mapping converted Enter into the
+CRLF line terminator required by the application.
+
+The recorded exchange was:
+
+| Direction | Message |
+| --- | --- |
+| HOST → TARGET, recorded in the application log | `hELLO AFTER REBOOT` |
+| TARGET → HOST, displayed by picocom | `Hello after reboot` |
+
+The HOST terminal displayed:
+
+```text
+Terminal ready
+Hello after reboot
+```
+
+On the TARGET, the log was inspected using:
+
+```bash
+cd ~/Projects/TASK-05_UART_communication/logs
+cat 20261016-011230-611.log
+```
+
+Recorded contents:
+
+```text
+2026-10-16 01:12:30+0300 START /dev/ttyAMA0
+2026-10-16 01:14:04+0300 RX hELLO AFTER REBOOT
+```
+
+The received message was preserved in the log before case conversion.
+The response displayed on the HOST confirmed that UART communication
+and case conversion worked while the application was running as a
+systemd service after reboot.
+
+### 6.6. Service Shutdown
+
+The service was stopped on the TARGET:
+
+```bash
+sudo systemctl stop uart-echo.service
+```
+
+The application log was inspected again:
+
+```bash
+cat 20261016-011230-611.log
+```
+
+Recorded contents:
+
+```text
+2026-10-16 01:12:30+0300 START /dev/ttyAMA0
+2026-10-16 01:14:04+0300 RX hELLO AFTER REBOOT
+2026-10-16 01:15:51+0300 STOP SIGTERM
+```
+
+The `STOP SIGTERM` entry confirms that the application received and
+handled the termination signal during service shutdown.
+
+### 6.7. Verification Outcome
+
+The recorded results confirm:
+
+- installation of the systemd service;
+- unit verification without diagnostic messages;
+- successful startup under systemd;
+- automatic startup after a TARGET reboot;
+- UART message exchange and case conversion after reboot;
+- timestamped logging of the original received message;
+- handling of SIGTERM during service shutdown.
