@@ -4,13 +4,13 @@ This report documents the development of UART echo application during
 TASK-05 and its systemd integration as part of TASK-06-Systemd.
 
 Sections 1–7 preserve the preparation steps, implementation details
-and verification results from that TASK-05.
+and verification results from TASK-05.
 
 Section 8 and subsequent sections document the TASK-06 changes.
 
 ## Contents
 
-- [1. TASK-05-UART-communication: Host and Target Preparation for UART Communication](#1-host-and-target-preparation-for-uart-communication)
+- [1. TASK-05-UART-communication: Host and Target Preparation for UART Communication](#1-task-05-uart-communication-host-and-target-preparation-for-uart-communication)
 - [2. TASK-05-UART-communication: UART Loopback Test](#2-uart-loopback-test)
 - [3. TASK-05-UART-communication: Implemented Application Functionality](#3-implemented-application-functionality-commit-task-05-add-uart-echo-application-with-logging-and-signal-handling-and-add-reportmd)
 - [4. TASK-05-UART-communication: Makefile Development and Verification](#4-makefile-development-and-verification)
@@ -18,8 +18,10 @@ Section 8 and subsequent sections document the TASK-06 changes.
 - [6. TASK-05-UART-communication: Automatic Startup Using systemd](#6-automatic-startup-using-systemd)
 - [7. TASK-05-UART-communication: Overall Conclusion](#7-overall-conclusion)
 - [8. TASK-06-Systemd: Service Unit Update](#8-task-06-systemd-service-unit-update)
+- [9. TASK-06-Systemd: Makefile Installation Target](#9-makefile-installation-target)
+- [10. TASK-06-Systemd: Overall Conclusion](#10-overall-conclusion)
 
-## 1. Host and Target Preparation for UART Communication
+## 1. TASK-05-UART-communication: Host and Target Preparation for UART Communication
 
 ### 1.1. Host Development Tools
 
@@ -1212,3 +1214,146 @@ systemd can terminate it forcibly with SIGKILL.
 | UART interface | `/dev/ttyAMA0` | Unchanged |
 | Restart policy | `on-failure`, three-second delay | Unchanged |
 | Service user | `art207-rpi5` | Unchanged |
+
+## 9. Makefile Installation Target
+
+### 9.1. Purpose
+
+The Makefile was extended with an `install` target to automate
+installation of the UART ECHO application and its systemd unit
+on the TARGET.
+
+The existing `all`, `clean` and `deploy` targets were retained.
+The new target was added to the `.PHONY` declaration:
+
+```makefile
+.PHONY: all clean deploy install
+```
+
+The `deploy` target copies the executable into the user's project
+directory. The `install` target installs the executable and service
+configuration into their system locations.
+
+### 9.2. Implementation
+
+The following target was added:
+
+```makefile
+install: $(TARGET) systemd/uart-echo.service
+	ssh $(REMOTE) 'mkdir -p "$(REMOTE_DIR)/install"'
+	scp $(TARGET) systemd/uart-echo.service $(REMOTE):$(REMOTE_DIR)/install/
+	ssh -t $(REMOTE) 'sudo install -m 755 "$(REMOTE_DIR)/install/$(TARGET)" /usr/local/bin/mycom && \
+		sudo install -m 644 "$(REMOTE_DIR)/install/uart-echo.service" /etc/systemd/system/uart-echo.service && \
+		sudo systemctl daemon-reload && \
+		sudo systemctl enable uart-echo.service'
+```
+
+The target depends on the executable and the service file.
+Make builds the executable first if it is missing or out of date.
+
+Installation consists of the following steps:
+
+1. Create staging directory on the TARGET.
+2. Copy the executable and service file through SCP.
+3. Install the executable as `/usr/local/bin/mycom` with mode `755`.
+4. Install the unit as `/etc/systemd/system/uart-echo.service`
+   with mode `644`.
+5. Reload the systemd configuration.
+6. Enable the service for automatic startup.
+
+The remote installation commands are connected with `&&`,
+so a failed command prevents subsequent commands from running.
+
+Compilation and file transfer run under the regular
+HOST user, privileged installation commands execute on the TARGET.
+
+### 9.3. Installation Command
+
+The target is invoked from the repository root on the HOST:
+
+```bash
+make clean
+make install CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
+```
+
+The cross-compiler produces static ARM64 executable for the
+Raspberry Pi.
+
+Running `make clean` before changing the compiler or linker options
+prevents reuse of an executable built with different settings.
+
+The destination remains configurable through `REMOTE` and `REMOTE_DIR`.
+The default values are:
+
+```makefile
+REMOTE ?= art207-rpi5@ajax-rpi5
+REMOTE_DIR ?= /home/art207-rpi5/Projects/TASK-05_UART_communication
+```
+
+`REMOTE_DIR` determines the staging location. The final installation
+paths remain `/usr/local/bin/mycom` and
+`/etc/systemd/system/uart-echo.service`.
+
+### 9.4. Service Activation
+
+The installation target executes:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable uart-echo.service
+```
+
+Enabling the unit configures automatic startup during subsequent boots.
+It doesn't start or restart the current service process.
+
+To apply the installed configuration immediately, run on the TARGET:
+
+```bash
+sudo systemctl restart uart-echo.service
+```
+
+The unit starts `/usr/local/bin/mycom` with `/dev/ttyAMA0`.
+Its working directory is `/var/lib/uart-echo`, so application logs
+are written to `/var/lib/uart-echo/logs/`.
+
+### 9.5. Makefile Verification
+
+Command generation was checked using:
+
+```bash
+make -n install CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
+```
+
+Run completed with exit code `0`.
+
+Shell syntax checks of the generated command sequences also completed
+with exit code `0`.
+
+## 10. Overall Conclusion
+
+TASK-06 extended the UART ECHO application from TASK-05 with
+automated system installation and updated systemd configuration.
+
+The service starts `/usr/local/bin/mycom` with `/dev/ttyAMA0`
+under the `art207-rpi5` user. UART access is provided through
+the `dialout` group. Startup is explicitly ordered after
+`sysinit.target` and the service is enabled through
+`multi-user.target`.
+
+A dedicated working directory is managed through `StateDirectory`.
+Application logs are stored in `/var/lib/uart-echo/logs/`.
+
+The Makefile now provides an `install` target that transfers and
+installs the executable and unit file, reloads systemd configuration
+and enables automatic startup.
+
+Functional operation on the TARGET was confirmed during manual use.
+The application runs under systemd, starts automatically at boot,
+receives UART messages, returns responses with inverted ASCII letter
+case and records the original messages with timestamps.
+Service stop and restart operations work as intended.
+
+The unit uses `Restart=on-failure` with a three-second restart delay
+and explicitly selects SIGTERM for normal shutdown. The application's
+existing signal handling supports orderly termination and resource
+cleanup.
