@@ -1,14 +1,19 @@
 [Unit]
 Description=UART Echo application on GPIO14/15
+After=sysinit.target
 
 [Service]
 Type=simple
 User=art207-rpi5
 SupplementaryGroups=dialout
-WorkingDirectory=/home/art207-rpi5/Projects/TASK-05_UART_communication
-ExecStart=/home/art207-rpi5/Projects/TASK-05_UART_communication/mycom /dev/ttyAMA0
+
+StateDirectory=uart-echo
+WorkingDirectory=/var/lib/uart-echo
+ExecStart=/usr/local/bin/mycom /dev/ttyAMA0
+
 Restart=on-failure
 RestartSec=3
+KillSignal=SIGTERM
 TimeoutStopSec=5
 
 [Install]

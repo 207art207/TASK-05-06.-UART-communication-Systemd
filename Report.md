@@ -1,14 +1,23 @@
-# Report: UART ECHO Application
+# Report: TASK-05-06 UART-communication and Systemd
+
+This report documents the development of UART echo application during
+TASK-05 and its systemd integration as part of TASK-06-Systemd.
+
+Sections 1–7 preserve the preparation steps, implementation details
+and verification results from that TASK-05.
+
+Section 8 and subsequent sections document the TASK-06 changes.
 
 ## Contents
 
-- [1. Host and Target Preparation for UART Communication](#1-host-and-target-preparation-for-uart-communication)
-- [2. UART Loopback Test](#2-uart-loopback-test)
-- [3. Implemented Application Functionality](#3-implemented-application-functionality-commit-task-05-add-uart-echo-application-with-logging-and-signal-handling-and-add-reportmd)
-- [4. Makefile Development and Verification](#4-makefile-development-and-verification)
-- [5. Deployment and UART ECHO Verification on the TARGET](#5-deployment-and-uart-echo-verification-on-the-target)
-- [6. Automatic Startup Using systemd](#6-automatic-startup-using-systemd)
-- [7. Overall Conclusion](#7-overall-conclusion)
+- [1. TASK-05-UART-communication: Host and Target Preparation for UART Communication](#1-host-and-target-preparation-for-uart-communication)
+- [2. TASK-05-UART-communication: UART Loopback Test](#2-uart-loopback-test)
+- [3. TASK-05-UART-communication: Implemented Application Functionality](#3-implemented-application-functionality-commit-task-05-add-uart-echo-application-with-logging-and-signal-handling-and-add-reportmd)
+- [4. TASK-05-UART-communication: Makefile Development and Verification](#4-makefile-development-and-verification)
+- [5. TASK-05-UART-communication: Deployment and UART ECHO Verification on the TARGET](#5-deployment-and-uart-echo-verification-on-the-target)
+- [6. TASK-05-UART-communication: Automatic Startup Using systemd](#6-automatic-startup-using-systemd)
+- [7. TASK-05-UART-communication: Overall Conclusion](#7-overall-conclusion)
+- [8. TASK-06-Systemd: Service Unit Update](#8-task-06-systemd-service-unit-update)
 
 ## 1. Host and Target Preparation for UART Communication
 
@@ -1048,3 +1057,158 @@ The main assignment functionality and the optional systemd startup
 feature were implemented. The work covered the complete workflow from
 UART configuration and hardware checks to C development, cross-compilation,
 deployment, logging, signal handling and service integration.
+
+## 8. TASK-06-Systemd: Service Unit Update
+
+### 8.1. Objective and Starting Point
+
+TASK-06 extends the existing UART ECHO application with automated
+system installation and service lifecycle verification.
+
+TASK-05 already provided a working systemd unit with:
+
+- `/dev/ttyAMA0` selected as the communication interface;
+- execution under the `art207-rpi5` user;
+- UART access through the supplementary `dialout` group;
+- the `Restart=on-failure` policy;
+- automatic startup through `multi-user.target`;
+- SIGTERM handling in the application.
+
+The previous configuration started the executable from the user's
+project directory and stored logs relative to that directory.
+
+For TASK-06, the unit was updated to use a system installation path,
+dedicated working directory and explicit startup ordering and
+termination settings.
+
+### 8.2. Updated Service Unit
+
+The following configuration was added to
+`systemd/uart-echo.service`:
+
+```ini
+[Unit]
+Description=UART Echo application on GPIO14/15
+After=sysinit.target
+
+[Service]
+Type=simple
+User=art207-rpi5
+SupplementaryGroups=dialout
+
+StateDirectory=uart-echo
+WorkingDirectory=/var/lib/uart-echo
+ExecStart=/usr/local/bin/mycom /dev/ttyAMA0
+
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 8.3. Startup Ordering
+
+The following directive explicitly orders the service after basic
+system initialization:
+
+```ini
+After=sysinit.target
+```
+
+Normal service units already receive an ordering dependency on
+`sysinit.target` through systemd's default dependencies. Adding it
+explicitly documents the intended startup order for this assignment.
+
+The existing installation setting was retained:
+
+```ini
+WantedBy=multi-user.target
+```
+
+When the service is enabled, this setting connects it to the normal
+multi-user boot sequence.
+
+### 8.4. Executable and Working Directory
+
+The executable path was changed from:
+
+```text
+/home/art207-rpi5/Projects/TASK-05_UART_communication/mycom
+```
+
+to:
+
+```text
+/usr/local/bin/mycom
+```
+
+The UART argument remains `/dev/ttyAMA0`.
+
+The new directory settings are:
+
+```ini
+StateDirectory=uart-echo
+WorkingDirectory=/var/lib/uart-echo
+```
+
+`StateDirectory` instructs systemd to create `/var/lib/uart-echo`
+and assign ownership according to the configured service user
+and group. This directory is preserved when the service stops.
+
+The application creates its `logs/` subdirectory relative to the
+working directory. Therefore, the updated service will write logs to:
+
+```text
+/var/lib/uart-echo/logs/
+```
+
+### 8.5. Restart Policy and Shutdown
+
+The existing restart settings were retained:
+
+```ini
+Restart=on-failure
+RestartSec=3
+```
+
+They configure an automatic restart after an unsuccessful process
+termination, with a three-second delay between attempts.
+Restart attempts remain subject to systemd's start-rate limits.
+
+An explicit stop through `systemctl stop` doesn't trigger automatic
+recovery under this policy.
+
+The termination signal is now explicitly configured:
+
+```ini
+KillSignal=SIGTERM
+TimeoutStopSec=5
+```
+
+SIGTERM is already systemd's default stop signal. Writing it explicitly
+makes the intended shutdown behavior visible in the unit.
+
+The application already handles SIGTERM by requesting termination
+through a signal flag. Its normal shutdown path records the stop
+reason, restores the original UART settings, closes the UART
+descriptor and log file.
+
+If the process doesn't terminate within the configured timeout,
+systemd can terminate it forcibly with SIGKILL.
+
+### 8.6. Change Summary
+
+| Setting | TASK-05 configuration | TASK-06 configuration |
+| --- | --- | --- |
+| Startup ordering | Default service dependencies | Explicit `After=sysinit.target` |
+| Executable | Project-directory `mycom` | `/usr/local/bin/mycom` |
+| Working directory | User's project directory | `/var/lib/uart-echo` |
+| Directory management | Project directory prepared separately | `StateDirectory=uart-echo` |
+| Log directory | Project-directory `logs/` | `/var/lib/uart-echo/logs/` |
+| Stop signal | Default SIGTERM | Explicit `KillSignal=SIGTERM` |
+| UART interface | `/dev/ttyAMA0` | Unchanged |
+| Restart policy | `on-failure`, three-second delay | Unchanged |
+| Service user | `art207-rpi5` | Unchanged |
