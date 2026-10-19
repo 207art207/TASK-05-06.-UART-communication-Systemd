@@ -1,4 +1,12 @@
-# TASK-05.-UART-communication
+# TASK-05-06 UART-communication and Systemd
+
+The project covers two tasks:
+
+- **TASK-05 - UART communication:** serial interface configuration,
+  CRLF-delimited message processing, ASCII case inversion, logging
+  and signal handling.
+- **TASK-06 - systemd integration:** automatic startup, restart policy,
+  service management and installation through Makefile.
 
 C UART ECHO application for Raspberry Pi 5 running Raspberry Pi OS Lite.
 
@@ -29,8 +37,9 @@ in [Report.md](Report.md).
 - A separate log file for each execution.
 - Error reporting to standard error and the log when available.
 - SIGINT and SIGTERM handling with resource cleanup.
-- Native compilation, ARM64 cross-compilation and deployment through SCP.
-- Optional automatic startup using systemd.
+- Native compilation, ARM64 cross-compilation.
+- Remote deployment and system installation through Makefile.
+- Automatic startup and process management through systemd.
 
 ## Project Structure
 
@@ -54,6 +63,9 @@ TASK-05.-UART-communication/
     └── uart-echo.service
 ```
 
+The Makefile builds `mycom` in the repository root.
+It doesn't update the saved executable in `bin/`.
+
 `bin/mycom` is a saved static ARM64 executable. The committed files in
 `logs/` contain recorded TARGET test results.
 
@@ -66,7 +78,8 @@ The tested TARGET is Raspberry Pi 5 running
 | --- | --- |
 | HOST build tools | GCC and GNU Make |
 | Cross-compiler | `aarch64-linux-gnu-gcc`, including libraries for static linking |
-| Deployment | SSH access to the TARGET and `scp` |
+| Deployment and installation | SSH and SCP access to the TARGET |
+| TARGET permissions | Permission to use `sudo` for system installation |
 | Serial terminal | `picocom` |
 | Formatting | `clang-format` compatible with the supplied configuration |
 | Hardware | USB-to-UART adapter with 3.3 V logic levels |
@@ -130,7 +143,21 @@ Default compiler flags:
 Additional options can be supplied through `CPPFLAGS`, `CFLAGS`,
 `LDFLAGS` and `LDLIBS`.
 
-## Deploy
+## Makefile Targets
+
+| Target | Purpose |
+| --- | --- |
+| `all` | Build `mycom` in the repository root |
+| `clean` | Remove the root-level `mycom` executable |
+| `deploy` | Copy the executable into the TARGET project directory |
+| `install` | Install the executable and service into system locations and enable automatic startup |
+
+`all` is the default target.
+
+`clean` preserves the saved binary, logs and photos.
+Neither `deploy` or `install` starts or restarts the application.
+
+## Manual Deployment and Execution - TASK-05
 
 The default deployment destination is:
 
@@ -231,32 +258,81 @@ message on one log line.
 Successful signal-driven termination returns exit status `0` when
 logging and cleanup succeed. Errors return exit status `1`.
 
-## Automatic Startup with systemd
+## System Installation - TASK-06
 
-The supplied unit uses the default deployment path and the
-`art207-rpi5` user. If your environment differs, update `User`,
-`WorkingDirectory` and `ExecStart` before installation.
+The installation target runs on the HOST and performs privileged
+installation commands on the TARGET through SSH.
 
-Stop any manually running instance before starting the service.
+Default remote settings:
 
-Copy the unit from the HOST repository root:
-
-```bash
-scp systemd/uart-echo.service \
-    art207-rpi5@ajax-rpi5:~/Projects/TASK-05_UART_communication/
+```makefile
+REMOTE ?= art207-rpi5@ajax-rpi5
+REMOTE_DIR ?= /home/art207-rpi5/Projects/TASK-05_UART_communication
 ```
 
-On the TARGET, install the system service and enable automatic startup:
+Installed paths:
+
+| Item | TARGET path |
+| --- | --- |
+| Executable | `/usr/local/bin/mycom` |
+| Service unit | `/etc/systemd/system/uart-echo.service` |
+| Working directory | `/var/lib/uart-echo` |
+| Application logs | `/var/lib/uart-echo/logs/` |
+
+Build and install from the HOST:
 
 ```bash
-sudo install -m 644 \
-    ~/Projects/TASK-05_UART_communication/uart-echo.service \
-    /etc/systemd/system/uart-echo.service
+make clean
+make install CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
+```
 
+The target:
+
+1. Builds the executable if required.
+2. Copies the executable and unit file into `$(REMOTE_DIR)/install/`.
+3. Installs the executable with mode `755`.
+4. Installs the unit file with mode `644`.
+5. Runs `systemctl daemon-reload`.
+6. Runs `systemctl enable uart-echo.service`.
+
+The SSH session allocates a terminal so that remote `sudo` can request
+a password. Running `sudo make install` on the HOST is not required.
+
+To inspect the commands without executing them:
+
+```bash
+make -n install CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static
+```
+
+The destination can be overridden:
+
+```bash
+make install CROSS_COMPILE=aarch64-linux-gnu- LDFLAGS=-static \
+    REMOTE=art207-rpi5@ajax-rpi5 \
+    REMOTE_DIR=/home/art207-rpi5/Projects/TASK-05_UART_communication
+```
+
+`REMOTE_DIR` controls the staging location.
+It doesn't change the final installation paths or the service user.
+
+If a different TARGET account is used, update `User=` in
+[systemd/uart-echo.service](systemd/uart-echo.service) before installation.
+
+## Service Management
+
+Before starting the service, stop any manually running instance
+of `mycom` using Ctrl+C in its TARGET terminal.
+Only one application instance should use the UART device.
+
+After installation, run on the TARGET:
+
+```bash
 sudo systemd-analyze verify /etc/systemd/system/uart-echo.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now uart-echo.service
+sudo systemctl restart uart-echo.service
 ```
+
+Stop any manually running instance of `mycom` before starting the service.
+Only one application instance should use the UART device.
 
 Inspect the service:
 
@@ -266,35 +342,63 @@ systemctl status uart-echo.service --no-pager
 journalctl -u uart-echo.service -b --no-pager
 ```
 
-Stop or start it explicitly:
+The expected startup message includes:
+
+```text
+Ready: /dev/ttyAMA0, 115200 8N1; log: logs/...
+```
+
+The relative log path is resolved against `/var/lib/uart-echo`.
+
+Service commands:
 
 ```bash
 sudo systemctl stop uart-echo.service
 sudo systemctl start uart-echo.service
+sudo systemctl restart uart-echo.service
 ```
 
-The service runs as `art207-rpi5` with the supplementary `dialout` group.
-Its working directory keeps application logs in the deployment directory.
+The service configuration provides:
 
-Automatic startup after reboot and UART communication under systemd
-were verified. See [Report.md](Report.md#6-automatic-startup-using-systemd)
-for the recorded results.
+| Setting | Behavior |
+| --- | --- |
+| `Type=simple` | systemd manages the foreground application process |
+| `After=sysinit.target` | Startup is ordered after basic system initialization |
+| `User=art207-rpi5` | The application runs as the regular TARGET user |
+| `SupplementaryGroups=dialout` | Provides group-based UART access |
+| `StateDirectory=uart-echo` | systemd creates the persistent working directory |
+| `Restart=on-failure` | Requests automatic recovery after a failure |
+| `RestartSec=3` | Sets a three-second delay before automatic restart |
+| `KillSignal=SIGTERM` | Requests orderly shutdown |
+| `TimeoutStopSec=5` | Limits the time allowed for shutdown |
 
-## Verification
+Automatic restart remains subject to systemd's start-rate limits.
+An explicit `systemctl stop` doesn't trigger automatic recovery.
 
-The report documents:
+`make install` enables startup at boot. To check it, reboot the TARGET,
+reconnect through SSH and inspect the service:
 
-- UART configuration and regular-user access;
-- a physical UART loopback test;
-- native and static ARM64 builds;
-- deployment and execution on the TARGET;
-- case inversion and timestamped message logging;
-- manual termination through SIGINT;
-- automatic startup after reboot;
-- UART communication after reboot;
-- SIGTERM handling during service shutdown.
+```bash
+sudo reboot
+```
 
-Saved TARGET logs are available in [logs/](logs/).
+After reconnecting:
+
+```bash
+systemctl is-active uart-echo.service
+journalctl -u uart-echo.service -b --no-pager
+```
+
+## Verification and Documentation
+
+[Report.md](Report.md) contains the implementation history,
+test results and conclusions for both tasks:
+
+- Sections 1–7: TASK-05 preparation, UART loopback, application
+  development, deployment and hardware tests.
+- Section 8: updated systemd service configuration.
+- Section 9: Makefile installation target.
+- Section 10: TASK-06 conclusion.
 
 Check source formatting without modifying files:
 
